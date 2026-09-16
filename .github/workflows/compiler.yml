@@ -1,16 +1,16 @@
-name: Build Universal Compiler Formats
+name: Build Compiler and Compile MicroASM Program
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch: # Allows you to trigger the compile manually from GitHub UI
+  workflow_dispatch:
 
 permissions:
-  contents: write # Crucial permission to allow pushing binaries back to the repo
+  contents: write
 
 jobs:
-  build:
+  build-and-compile:
     runs-on: windows-latest
 
     steps:
@@ -24,44 +24,62 @@ jobs:
 
       - name: Install GoLink
         run: |
-          # Download the lightweight GoLink linker
           Invoke-WebRequest -Uri "http://gowansnet.co.uk" -OutFile "golink.zip"
           Expand-Archive -Path "golink.zip" -DestinationPath "GoLink"
           echo "$(Get-Location)\GoLink" >> $GITHUB_PATH
 
-      - name: Compile and Link Formats
+      - name: Compile Compiler Engine Formats
         run: |
-          # 1. Assemble the code into a standard Windows 64-bit object file
+          # 1. Assemble the engine source code into an object file
           nasm -f win64 compiler.asm -o compiler.obj
 
-          # Option A: Standalone Executable Build
+          # Option A: Standalone Compiler Executable
           golink /entry _start compiler.obj kernel32.dll /fo compiler.exe
 
-          # Option B: DLL Loader Build (for rundll32 execution)
+          # Option B: DLL Loader Version (for rundll32)
           golink /dll /entry DllMain compiler.obj kernel32.dll /fo compiler.dll
 
-          # Option C: Raw Position-Independent Blob (Pure Headerless Bytes)
+          # Option C: Raw Position-Independent Blob
           nasm -f bin compiler.asm -o compiler.bin
+
+      - name: Create Mock Program File If Missing
+        run: |
+          # If program.masm doesn't exist in your repo root yet, create a dummy one for testing
+          if (-not (Test-Path "program.masm")) {
+              Set-Content -Path "program.masm" -Value "set add sub"
+              Write-Output "[*] Created temporary program.masm for compilation test."
+          }
+
+      - name: Execute Compiler Engine on MicroASM Source
+        run: |
+          # Run your native x86_64 compiler binary.
+          # (Ensure your compiler.asm is updated to read "program.masm" from disk and write "output.bin")
+          .\compiler.exe
+
+          Write-Output "[+] Native compiler engine completed processing."
 
       - name: Clean up Build Artifacts
         run: |
-          # Remove the temporary object file to keep the repo clean
           if (Test-Path compiler.obj) { Remove-Item compiler.obj }
 
-      - name: Commit and Push Updated Binaries
+      - name: Commit and Push All Generated Formats
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@://github.com"
           
-          # Stage the freshly compiled outputs
+          # Stage the compiler configurations as well as the compiled microASM output binary
           git add compiler.exe compiler.dll compiler.bin
           
-          # Check if changes actually exist before attempting a commit to prevent workflow failures
+          # Add output.bin if your native compiler code successfully saved its output to disk
+          if (Test-Path "output.bin") {
+              git add output.bin
+          }
+          
           $gitStatus = git status --porcelain
           if ($gitStatus) {
-              git commit -m "Auto-compile: Updated universal binaries [skip ci]"
+              git commit -m "Auto-compile: Updated binaries and compiled MicroASM output [skip ci]"
               git push
-              Write-Output "[+] Successfully updated and pushed new compiled formats."
+              Write-Output "[+] Successfully updated repository with new binaries."
           } else {
-              Write-Output "[-] No changes detected in binaries. Skipping commit."
+              Write-Output "[-] No file alterations detected. Skipping deployment push."
           }
