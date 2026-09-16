@@ -21,23 +21,13 @@ jobs:
         run: |
           choco install nasm -y
           echo "C:\Program Files\NASM" >> $GITHUB_PATH
-
       - name: Install GoLink
+        shell: cmd
         run: |
-          # Force TLS 1.2 to prevent PowerShell web download assembly errors
-          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          mkdir GoLink -Force
-          
-          # Use native curl.exe to download GoLink directly
+          mkdir GoLink
           curl.exe -sSL "https://www.godevtool.com/golink.zip" -o "golink.zip"
-          
-          if (Test-Path "golink.zip") {
-              Expand-Archive -Path "golink.zip" -DestinationPath "GoLink" -Force
-              echo "$(Get-Location)\GoLink" >> $GITHUB_PATH
-          } else {
-              Write-Error "Failed to retrieve GoLink package."
-              exit 1
-          }
+          tar -xf golink.zip -C GoLink
+          echo %CD%\GoLink>> %GITHUB_PATH%
 
       - name: Compile Compiler Engine Formats
         run: |
