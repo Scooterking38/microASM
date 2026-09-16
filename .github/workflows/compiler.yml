@@ -24,13 +24,13 @@ jobs:
 
       - name: Install GoLink
         run: |
-          Invoke-WebRequest -Uri "http://gowansnet.co.uk" -OutFile "golink.zip"
+          # Download from the active official GoDevTool server
+          Invoke-WebRequest -Uri "https://godevtool.com" -OutFile "golink.zip"
           Expand-Archive -Path "golink.zip" -DestinationPath "GoLink"
           echo "$(Get-Location)\GoLink" >> $GITHUB_PATH
 
       - name: Compile Compiler Engine Formats
         run: |
-          # 1. Assemble the engine source code into an object file
           nasm -f win64 compiler.asm -o compiler.obj
 
           # Option A: Standalone Compiler Executable
@@ -44,7 +44,6 @@ jobs:
 
       - name: Create Mock Program File If Missing
         run: |
-          # If program.masm doesn't exist in your repo root yet, create a dummy one for testing
           if (-not (Test-Path "program.masm")) {
               Set-Content -Path "program.masm" -Value "set add sub"
               Write-Output "[*] Created temporary program.masm for compilation test."
@@ -52,10 +51,7 @@ jobs:
 
       - name: Execute Compiler Engine on MicroASM Source
         run: |
-          # Run your native x86_64 compiler binary.
-          # (Ensure your compiler.asm is updated to read "program.masm" from disk and write "output.bin")
           .\compiler.exe
-
           Write-Output "[+] Native compiler engine completed processing."
 
       - name: Clean up Build Artifacts
@@ -65,12 +61,10 @@ jobs:
       - name: Commit and Push All Generated Formats
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@://github.com"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Stage the compiler configurations as well as the compiled microASM output binary
           git add compiler.exe compiler.dll compiler.bin
           
-          # Add output.bin if your native compiler code successfully saved its output to disk
           if (Test-Path "output.bin") {
               git add output.bin
           }
