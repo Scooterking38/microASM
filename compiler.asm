@@ -1,48 +1,49 @@
-; compiler_engine.asm - Extensible, Headerless Compiler Engine (Intel Syntax)
+; compiler_engine.asm - Corrected Extensible Compiler Engine
 bits 64
+default rel
+
 section .text
 global _start
 global DllMain
 
-; Dual-purpose entry point for EXE or rundll32.exe
 _start:
 DllMain:
-    sub rsp, 40                 ; Align stack and create shadow space
-    
-    lea rsi, [rel mock_source]  ; rsi = pointer to source code to compile
-    lea rdi, [rel out_buffer]   ; rdi = pointer to output buffer for machine bytes
+    sub rsp, 40                 ; Shadow space + stack alignment
+
+    lea rsi, [mock_source]      ; Source code cursor
+    lea rdi, [out_buffer]       ; Machine code output destination
 
 .parse_loop:
-    ; Skip leading spaces or newlines
     mov al, [rsi]
     test al, al
-    jz .compilation_done        ; Null terminator means we are finished
+    jz .compilation_done        ; Standard null terminator check
+    
     cmp al, 20h                 ; Space
     je .skip_char
     cmp al, 0Ah                 ; Newline
     je .skip_char
-    
+    cmp al, 0Dh                 ; Carriage return
+    je .skip_char
+
     ; Match token against the Command Table
-    lea rbx, [rel command_table]
+    lea rbx, [command_table]
 
 .table_lookup:
-    mov rdx, [rbx]              ; Load string pointer from table
+    mov rdx, [rbx]              ; Keyword pointer
     test rdx, rdx
-    jz .unknown_command         ; End of table reached without a match
-    
-    ; Call string comparison helper
-    mov r8, rsi                 ; Keep rsi safe during comparison
+    jz .unknown_command         ; Unknown instruction encountered
+
     call .compare_strings
     test rax, rax
     jnz .match_found
-    
-    add rbx, 16                 ; Move to next entry in the table (String ptr + Func ptr = 16 bytes)
+
+    add rbx, 16                 ; Move to next entry (8 bytes str ptr + 8 bytes fn ptr)
     jmp .table_lookup
 
 .match_found:
-    ; Advance rsi past the length of the matched keyword
-    mov rcx, [rbx + 8]          ; Get the function pointer
-    call rcx                    ; Execute the command handler
+    add rsi, rax                ; Advance rsi by the length returned in rax
+    mov rcx, [rbx + 8]          ; Load handler function address
+    call rcx                    ; Dispatch handler (writes to rdi)
     jmp .parse_loop
 
 .skip_char:
@@ -50,93 +51,86 @@ DllMain:
     jmp .parse_loop
 
 .unknown_command:
-    ; If a command fails, emit a safe NOP and break out
-    mov al, 0x90
+    mov al, 0x90                ; Emit NOP on unexpected token
     stosb
-    jmp .compilation_done
+    inc rsi                     ; Consume unknown byte to break loop
+    jmp .parse_loop
 
 .compilation_done:
-    ; Ensure the code always terminates cleanly with a ret instruction
-    mov al, 0xC3                ; 'ret' opcode
+    mov al, 0xC3                ; Emit 'ret'
     stosb
 
-    ; Return success (1) to the Windows loader
-    mov eax, 1
+    mov eax, 1                  ; Return success
     add rsp, 40
     ret
 
-; --- STRING COMPARISON HELPER ---
+; --- Helper: Compare string at rsi with rdx ---
+; Returns matched string length in rax on match, or 0 on mismatch
 .compare_strings:
-    ; Compares the string at rsi with string at rdx
     push rsi
     push rdx
+    xor rcx, rcx                ; Counter for match length
+
 .comp_loop:
     mov al, [rdx]
     test al, al
-    jz .strings_match           ; Reached end of table keyword safely
-    mov cl, [rsi]
-    cmp al, cl
-    jne .strings_mismatch
+    jz .match_success           ; Reached end of pattern keyword
+
+    mov byte bl, [rsi]
+    cmp al, bl
+    jne .match_fail
+
     inc rsi
     inc rdx
+    inc rcx
     jmp .comp_loop
-.strings_mismatch:
+
+.match_fail:
     pop rdx
     pop rsi
     xor rax, rax
     ret
-.strings_match:
+
+.match_success:
     pop rdx
     pop rsi
-    ; Calculate length to advance rsi in the main loop
-    push rdx
-.len_loop:
-    mov al, [rdx]
-    test al, al
-    jz .len_done
-    inc rsi                     ; Permanently advance the main source pointer past keyword
-    inc rdx
-    jmp .len_loop
-.len_done:
-    pop rdx
-    mov rax, 1
+    mov rax, rcx                ; Return length matched
     ret
 
 ; =========================================================================
-; 🚀 LINKING NEW COMMANDS: ADDING HANDLERS IS STEP-BY-STEP HERE
+; INSTRUCTION HANDLERS
 ; =========================================================================
 
 EmitSet:
-    ; Command: "set rax 5" -> Emits: mov rax, 5 (\x48\xB8\x05\x00\x00\x00\x00\x00\x00\x00)
-    ; In a production version, parse rsi to extract the value dynamically.
-    mov ax, 0B848h              ; 'mov rax' prefix
+    ; "set" -> mov rax, 5
+    mov ax, 0xB848              ; REX.W + MOV RAX opcode
     stosw
-    mov rax, 5                  ; Extracted immediate value
+    mov rax, 5                  ; Immediate 64-bit value
     stosq
     ret
 
 EmitAdd:
-    ; Command: "add rax rbx" -> Emits: add rax, rbx (\x48\x01\xD8)
-    mov eax, 0xD80148           ; Little-endian for 48 01 D8
-    stosb                       ; Write 48
-    shr eax, 8
-    stosb                       ; Write 01
-    shr eax, 8
-    stosb                       ; Write D8
+    ; "add" -> add rax, rbx
+    mov al, 0x48                ; REX.W
+    stosb
+    mov al, 0x01                ; ADD r/m64, r64
+    stosb
+    mov al, 0xD8                ; ModR/M for rax, rbx
+    stosb
     ret
 
 EmitSub:
-    ; Command: "sub rax rbx" -> Emits: sub rax, rbx (\x48\x29\xD8)
-    mov eax, 0xD82948           ; Little-endian for 48 29 D8
+    ; "sub" -> sub rax, rbx
+    mov al, 0x48                ; REX.W
     stosb
-    shr eax, 8
+    mov al, 0x29                ; SUB r/m64, r64
     stosb
-    shr eax, 8
+    mov al, 0xD8                ; ModR/M for rax, rbx
     stosb
     ret
 
 ; =========================================================================
-; 📋 THE CENTRAL COMMAND TABLE
+; DATA SECTIONS
 ; =========================================================================
 section .data
 align 8
@@ -144,16 +138,13 @@ command_table:
     dq cmd_set, EmitSet
     dq cmd_add, EmitAdd
     dq cmd_sub, EmitSub
-    dq 0, 0                     ; Null terminator signals the end of the table
+    dq 0, 0
 
-    ; Keyword String Literals
-    cmd_set db "set", 0
-    cmd_add db "add", 0
-    cmd_sub db "sub", 0
-
-    ; Mock inline file data for testing execution flow
-    mock_source db "set add sub", 0
+cmd_set     db "set", 0
+cmd_add     db "add", 0
+cmd_sub     db "sub", 0
+mock_source db "set add sub", 0
 
 section .bss
 align 8
-    out_buffer resb 512         ; Dest buffer where generated machine code is kept
+out_buffer  resb 512
