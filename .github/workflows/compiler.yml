@@ -21,24 +21,17 @@ jobs:
         run: |
           choco install nasm -y
           echo "C:\Program Files\NASM" >> $GITHUB_PATH
-      - name: Install GoLink
-        shell: cmd
-        run: |
-          mkdir GoLink
-          curl.exe -sSL "https://www.godevtool.com/golink.zip" -o "golink.zip"
-          tar -xf golink.zip -C GoLink
-          echo %CD%\GoLink>> %GITHUB_PATH%
 
-      - name: Compile Compiler Engine Formats
+      - name: Compile and Link Engine
         run: |
-          # 1. Assemble object file for linking
+          # 1. Assemble object file using NASM
           nasm -f win64 compiler.asm -o compiler.obj
 
-          # 2. Link executable target
-          GoLink /entry _start compiler.obj kernel32.dll /fo compiler.exe
+          # 2. Link native executable target via GCC
+          gcc -m64 -nostdlib -e _start compiler.obj -o compiler.exe -lkernel32
 
-          # 3. Link dynamic library target
-          GoLink /dll /entry DllMain compiler.obj kernel32.dll /fo compiler.dll
+          # 3. Link dynamic library target via GCC
+          gcc -m64 -shared -e DllMain compiler.obj -o compiler.dll -lkernel32
 
           # 4. Assemble position-independent binary flat image
           nasm -f bin compiler.asm -o compiler.bin
@@ -58,7 +51,6 @@ jobs:
       - name: Clean up Build Artifacts
         run: |
           if (Test-Path compiler.obj) { Remove-Item compiler.obj }
-          if (Test-Path golink.zip) { Remove-Item golink.zip }
 
       - name: Commit and Push All Generated Formats
         run: |
