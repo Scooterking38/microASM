@@ -24,22 +24,33 @@ jobs:
 
       - name: Install GoLink
         run: |
-          # Download from the active official GoDevTool server
-          Invoke-WebRequest -Uri "https://godevtool.com" -OutFile "golink.zip"
-          Expand-Archive -Path "golink.zip" -DestinationPath "GoLink"
-          echo "$(Get-Location)\GoLink" >> $GITHUB_PATH
+          # Force TLS 1.2 to prevent PowerShell web download assembly errors
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          mkdir GoLink -Force
+          
+          # Use native curl.exe to download GoLink directly
+          curl.exe -sSL "https://www.godevtool.com/golink.zip" -o "golink.zip"
+          
+          if (Test-Path "golink.zip") {
+              Expand-Archive -Path "golink.zip" -DestinationPath "GoLink" -Force
+              echo "$(Get-Location)\GoLink" >> $GITHUB_PATH
+          } else {
+              Write-Error "Failed to retrieve GoLink package."
+              exit 1
+          }
 
       - name: Compile Compiler Engine Formats
         run: |
+          # 1. Assemble object file for linking
           nasm -f win64 compiler.asm -o compiler.obj
 
-          # Option A: Standalone Compiler Executable
-          golink /entry _start compiler.obj kernel32.dll /fo compiler.exe
+          # 2. Link executable target
+          GoLink /entry _start compiler.obj kernel32.dll /fo compiler.exe
 
-          # Option B: DLL Loader Version (for rundll32)
-          golink /dll /entry DllMain compiler.obj kernel32.dll /fo compiler.dll
+          # 3. Link dynamic library target
+          GoLink /dll /entry DllMain compiler.obj kernel32.dll /fo compiler.dll
 
-          # Option C: Raw Position-Independent Blob
+          # 4. Assemble position-independent binary flat image
           nasm -f bin compiler.asm -o compiler.bin
 
       - name: Create Mock Program File If Missing
@@ -57,6 +68,7 @@ jobs:
       - name: Clean up Build Artifacts
         run: |
           if (Test-Path compiler.obj) { Remove-Item compiler.obj }
+          if (Test-Path golink.zip) { Remove-Item golink.zip }
 
       - name: Commit and Push All Generated Formats
         run: |
