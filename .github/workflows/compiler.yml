@@ -1,0 +1,67 @@
+name: Build Universal Compiler Formats
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allows you to trigger the compile manually from GitHub UI
+
+permissions:
+  contents: write # Crucial permission to allow pushing binaries back to the repo
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install NASM
+        run: |
+          choco install nasm -y
+          echo "C:\Program Files\NASM" >> $GITHUB_PATH
+
+      - name: Install GoLink
+        run: |
+          # Download the lightweight GoLink linker
+          Invoke-WebRequest -Uri "http://gowansnet.co.uk" -OutFile "golink.zip"
+          Expand-Archive -Path "golink.zip" -DestinationPath "GoLink"
+          echo "$(Get-Location)\GoLink" >> $GITHUB_PATH
+
+      - name: Compile and Link Formats
+        run: |
+          # 1. Assemble the code into a standard Windows 64-bit object file
+          nasm -f win64 compiler.asm -o compiler.obj
+
+          # Option A: Standalone Executable Build
+          golink /entry _start compiler.obj kernel32.dll /fo compiler.exe
+
+          # Option B: DLL Loader Build (for rundll32 execution)
+          golink /dll /entry DllMain compiler.obj kernel32.dll /fo compiler.dll
+
+          # Option C: Raw Position-Independent Blob (Pure Headerless Bytes)
+          nasm -f bin compiler.asm -o compiler.bin
+
+      - name: Clean up Build Artifacts
+        run: |
+          # Remove the temporary object file to keep the repo clean
+          if (Test-Path compiler.obj) { Remove-Item compiler.obj }
+
+      - name: Commit and Push Updated Binaries
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@://github.com"
+          
+          # Stage the freshly compiled outputs
+          git add compiler.exe compiler.dll compiler.bin
+          
+          # Check if changes actually exist before attempting a commit to prevent workflow failures
+          $gitStatus = git status --porcelain
+          if ($gitStatus) {
+              git commit -m "Auto-compile: Updated universal binaries [skip ci]"
+              git push
+              Write-Output "[+] Successfully updated and pushed new compiled formats."
+          } else {
+              Write-Output "[-] No changes detected in binaries. Skipping commit."
+          }
